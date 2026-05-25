@@ -2,7 +2,7 @@
 /**
  * Plugin Name:     Wp Htmx
  * Plugin URI:      https://github.com/garubi/wp-htmx
- * Description:     PLUGIN DESCRIPTION HERE
+ * Description:     HTMX for WordPress
  * Author:          Stefano Garuti
  * Author URI:      https://github.com/garubi
  * Text Domain:     wp-htmx
