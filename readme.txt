@@ -1,115 +1,145 @@
-=== Wp Htmx ===
+=== WP HTMX ===
 Contributors: garubi
-Donate link: https://example.com/
-Tags: htmx, hypermedia
-Requires at least: 4.5
+Tags: htmx, hypermedia, ajax, rest, spa
+Requires at least: 6.0
 Tested up to: 6.9.4
-Requires PHP: 5.6
+Requires PHP: 8.1
 Stable tag: 0.1.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
-Here is a short description of the plugin.  This should be no more than 150 characters.  No markup here.
+Integrates HTMX into WordPress with a two-layer router, automatic WP nonce injection, and a filterable script URL.
 
 == Description ==
 
-This is the long description.  No limit, and you can use Markdown (as well as in the following sections).
+**WP HTMX** loads the [HTMX](https://htmx.org/) library into the WordPress frontend and provides a lightweight PHP router for HTMX requests, using HTMX 4 (`@next`).
 
-For backwards compatibility, if this section is missing, the full length of the short description will be used, and
-Markdown parsed.
+= What it does =
 
-A few notes about the sections above:
+* **Enqueues HTMX** automatically on all frontend pages (CDN or your own copy via filter).
+* **Injects the WP nonce** (`wp_create_nonce('htmx')`) into every HTMX request header (`X-WP-Nonce`) so WordPress REST/AJAX routes can authenticate requests.
+* **Provides `is_htmx()`** — a simple helper to detect HTMX requests server-side.
+* **Two-layer router** for serving partial HTML fragments:
+  * **Layer 1 – Registered routes** (`template_redirect`): explicit routes with callbacks, permission checks, nonce verification, validation, and template resolution.
+  * **Layer 2 – Convention fallback** (`template_include`): for GET requests, auto-loads `htmx/{post_type}/archive.php` or `single.php` from your theme with no registration needed.
 
-*   "Contributors" is a comma separated list of wp.org/wp-plugins.org usernames
-*   "Tags" is a comma separated list of tags that apply to the plugin
-*   "Requires at least" is the lowest version that the plugin will work on
-*   "Tested up to" is the highest version that you've *successfully used to test the plugin*. Note that it might work on
-higher versions... this is just the highest one you've verified.
-*   Stable tag should indicate the Subversion "tag" of the latest stable version, or "trunk," if you use `/trunk/` for
-stable.
+= Filters =
 
-    Note that the `readme.txt` of the stable tag is the one that is considered the defining one for the plugin, so
-if the `/trunk/readme.txt` file says that the stable tag is `4.3`, then it is `/tags/4.3/readme.txt` that'll be used
-for displaying information about the plugin.  In this situation, the only thing considered from the trunk `readme.txt`
-is the stable tag pointer.  Thus, if you develop in trunk, you can update the trunk `readme.txt` to reflect changes in
-your in-development version, without having that information incorrectly disclosed about the current stable version
-that lacks those changes -- as long as the trunk's `readme.txt` points to the correct stable tag.
+**`wphx_htmx_src`** — Override the HTMX script URL (e.g. local copy or pinned version):
 
-    If no stable tag is provided, it is assumed that trunk is stable, but you should specify "trunk" if that's where
-you put the stable version, in order to eliminate any doubt.
+    add_filter( 'wphx_htmx_src', fn() => get_template_directory_uri() . '/js/htmx.min.js' );
+
+**`wphx_template_dir`** — Override the base directory for HTMX templates (default: `htmx`). This applies to **all** template lookups: convention fallback, theme defaults, plugin bundled fallbacks, and the explicit `template` arg on routes.
+
+    add_filter( 'wphx_template_dir', fn() => 'partials/htmx' );
+
+You can read the actual values returned by the filter in the **Site Healt** section of the WP Dashboard
+
+= Registering routes =
+
+Hook into `wphx_register_routes` and call `wphx_register_route()`:
+
+    add_action( 'wphx_register_routes', function () {
+
+        // Simple GET with auto WP_Query and convention template
+        wphx_register_route( '/posts/', [
+            'methods'             => 'GET',
+            'permission_callback' => '__return_true',
+        ] );
+
+        // POST with explicit callback and permission check
+        // 'template' is relative to wphx_template_dir (default: htmx/)
+        wphx_register_route( '/posts/', [
+            'methods'             => 'POST',
+            'callback'            => 'my_create_post',
+            'permission_callback' => fn() => current_user_can( 'publish_posts' ),
+            'template'            => 'posts/row.php',
+        ] );
+
+        // Multiple methods on the same path
+        wphx_register_route( '/posts/compact/', [
+            [ 'methods' => 'GET',  'permission_callback' => '__return_true' ],
+            [ 'methods' => 'POST', 'callback' => 'my_fn', 'template' => 'posts/compact/row.php' ],
+        ] );
+    } );
+
+= Convention fallback (Layer 2) =
+
+No registration needed for GET requests. Just create the template in your theme:
+
+* `htmx/{post_type}/archive.php` — served for archive pages
+* `htmx/{post_type}/single.php`  — served for single post pages
+
+The standard `WP_Query` set by WordPress is already available in the template.
+
+= Template resolution chain =
+
+For every request the router looks for a template in this order, stopping at the first match:
+
+1. **Route `template` arg** — path relative to `{tpl_dir}`, e.g. `'posts/row.php'` resolves to `{tpl_dir}/posts/row.php`. A callable may return an absolute filesystem path to bypass `tpl_dir` entirely.
+2. **Theme — specific with variant** — `{tpl_dir}/{resource}/{mode}-{variant}.php`
+3. **Theme — specific** — `{tpl_dir}/{resource}/{mode}.php`
+4. **Theme — default override** — `{tpl_dir}/defaults/{mode}.php` (override plugin defaults without touching individual post types)
+5. **Plugin — bundled fallback** — `wp-htmx/defaults/{mode}.php` (always available, works in any theme)
+6. **No template found** — returns 204 No Content (Layer 1) or lets WordPress render the normal page (Layer 2)
+
+`{tpl_dir}` is the value of `wphx_template_dir` (default: `htmx`). It is the base for **all** lookups — both convention-based and explicit `template` args.
+
+The same chain applies to Layer 1 registered routes, Layer 2 convention fallback, and the error template in `send_error()`.
+
+= Customising default templates =
+
+The plugin ships with minimal, class-agnostic defaults (`error.php`, `archive.php`, `single.php`) that use the CSS classes `wphx-error`, `wphx-empty`, `wphx-list`, `wphx-single`. You can style or replace them without editing the plugin:
+
+* **Override all defaults at once** — copy `wp-htmx/defaults/` into your theme as `htmx/defaults/`. The plugin bundled templates will never be reached.
+* **Override only one mode** — e.g. create `{theme}/htmx/defaults/archive.php`. The plugin fallback is used only for the other modes.
+* **Override for a specific post type** — create `{theme}/htmx/{post_type}/archive.php` (or `single.php`). This takes priority over both the theme default and the plugin bundled template.
+
+= Template variables =
+
+Inside any HTMX template the `$request` variable (`WPHX_Request`) is available:
+
+    <?php
+    $posts  = $request->get_result();   // WP_Query, WP_Post, or custom callback result
+    $search = $request->get_param( 's' );
+
+    // HTMX response header helpers
+    $request->hx_trigger( 'refreshCount' );
+    $request->hx_push_url( '/posts/' );
+    ?>
 
 == Installation ==
 
-This section describes how to install the plugin and get it working.
-
-e.g.
-
-1. Upload `plugin-name.php` to the `/wp-content/plugins/` directory
-1. Activate the plugin through the 'Plugins' menu in WordPress
-1. Place `<?php do_action('plugin_name_hook'); ?>` in your templates
+1. Upload the `wp-htmx` folder to `/wp-content/plugins/`.
+2. Activate the plugin in **Plugins → Installed Plugins**.
+3. Add `htmx/` templates to your theme and register routes via the `wphx_register_routes` action.
 
 == Frequently Asked Questions ==
 
-= A question that someone might have =
+= Does it work with HTMX 1.x / 2.x? =
 
-An answer to that question.
+The plugin targets HTMX 4 (`@next`) from jsDelivr. HTMX 4 changed the nonce event to `htmx:config:request`. Older versions used `htmx:configRequest` — if you need compatibility, use the `wphx_htmx_src` filter to point to an older version and add your own inline nonce script.
 
-= What about foo bar? =
+= How do I use a locally hosted HTMX file? =
 
-Answer to foo bar dilemma.
+    add_filter( 'wphx_htmx_src', function() {
+        return get_template_directory_uri() . '/js/htmx.min.js';
+    } );
 
-== Screenshots ==
+= How is the WP nonce verified server-side? =
 
-1. This screen shot description corresponds to screenshot-1.(png|jpg|jpeg|gif). Note that the screenshot is taken from
-the /assets directory or the directory that contains the stable readme.txt (tags or trunk). Screenshots in the /assets
-directory take precedence. For example, `/assets/screenshot-1.png` would win over `/tags/4.3/screenshot-1.png`
-(or jpg, jpeg, gif).
-2. This is the second screen shot
+The plugin injects the nonce into `X-WP-Nonce` on every HTMX request. Server-side, read it with:
+
+    wp_verify_nonce( $_SERVER['HTTP_X_WP_NONCE'] ?? '', 'htmx' )
+
+The router does this automatically for POST and DELETE routes.
 
 == Changelog ==
 
-= 1.0 =
-* A change since the previous version.
-* Another change.
-
-= 0.5 =
-* List versions from most recent at top to oldest at bottom.
+= 0.1.0 =
+* Initial release: asset loader, `is_htmx()` helper, two-layer router (`WPHX_Router`, `WPHX_Request`).
 
 == Upgrade Notice ==
 
-= 1.0 =
-Upgrade notices describe the reason a user should upgrade.  No more than 300 characters.
-
-= 0.5 =
-This version fixes a security related bug.  Upgrade immediately.
-
-== Arbitrary section ==
-
-You may provide arbitrary sections, in the same format as the ones above.  This may be of use for extremely complicated
-plugins where more information needs to be conveyed that doesn't fit into the categories of "description" or
-"installation."  Arbitrary sections will be shown below the built-in sections outlined above.
-
-== A brief Markdown Example ==
-
-Ordered list:
-
-1. Some feature
-1. Another feature
-1. Something else about the plugin
-
-Unordered list:
-
-* something
-* something else
-* third thing
-
-Here's a link to [WordPress](https://wordpress.org/ "Your favorite software") and one to [Markdown's Syntax Documentation][markdown syntax].
-Titles are optional, naturally.
-
-[markdown syntax]: https://daringfireball.net/projects/markdown/syntax
-            "Markdown is what the parser uses to process much of the readme file"
-
-Markdown uses email style notation for blockquotes and I've been told:
-> Asterisks for *emphasis*. Double it up  for **strong**.
-
-`<?php code(); // goes in backticks ?>`
+= 0.1.0 =
+Initial release.
