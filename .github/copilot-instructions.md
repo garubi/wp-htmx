@@ -5,7 +5,7 @@
 **WP HTMX** integrates [HTMX 4](https://htmx.org/) (`@next`) into WordPress. It enqueues the HTMX library, injects a WP nonce into every HTMX request, and provides a two-layer PHP router for serving partial HTML fragments.
 
 - **Plugin entry point**: [wp-htmx.php](../wp-htmx.php)
-- **Full documentation**: [readme.txt.md](../readme.txt.md)
+- **Full documentation**: [README.md](../README.md)
 
 ## Architecture
 
